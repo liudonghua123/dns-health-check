@@ -103,3 +103,45 @@ DATABASE_URL=sqlite+aiosqlite:///./dns_health_check.db
 ## 许可证
 
 MIT
+
+## 构建可执行文件 (PyInstaller)
+
+### 前置条件
+
+安装 PyInstaller:
+
+```bash
+pip install pyinstaller
+```
+
+### 构建命令
+
+在 backend 目录下运行:
+
+```bash
+cd backend
+
+# 先安装依赖
+uv sync
+
+# 构建可执行文件
+pyinstaller app/main.py --onefile --name dns-health-check.exe --add-data "app;app" --add-data "app/public;public" --hidden-import fastapi --hidden-import uvicorn --hidden-import uvicorn.logging --hidden-import uvicorn.loops --hidden-import uvicorn.loops.auto --hidden-import uvicorn.protocols --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.h11 --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on --hidden-import starlette --hidden-import starlette.responses --hidden-import starlette.routing --hidden-import starlette.middleware --hidden-import starlette.middleware.cors --hidden-import starlette.staticfiles --hidden-import sqlalchemy --hidden-import sqlalchemy.ext --hidden-import sqlalchemy.ext.asyncio --hidden-import aiosqlite --hidden-import aiomysql --hidden-import asyncpg --hidden-import bcrypt --hidden-import passlib --hidden-import passlib.handlers --hidden-import passlib.handlers.bcrypt --hidden-import pydantic --hidden-import pydantic_settings --hidden-import jose --hidden-import jose.jwt --hidden-import jose.utils --hidden-import jose.backends --hidden-import jose.backends.cryptography_backend --hidden-import cryptography --hidden-import python_multipart --hidden-import docx --hidden-import reportlab --hidden-import passlib.context --paths ".venv/Lib/site-packages"
+
+### 构建输出
+
+可执行文件将生成在 `backend/dist/dns-health-check.exe`。
+
+### 运行可执行文件
+
+```bash
+# 可执行文件将同时提供前端和后端服务
+# 默认端口: 9000 (可在 .env 中配置)
+
+./dist/dns-health-check.exe
+```
+
+### 注意
+
+- 前端静态文件 `app/public/` 会打包到可执行文件中
+- 构建前需要先在 frontend 目录运行 `npm run build`，然后重新构建 PyInstaller 包
+- SQLite 数据库会在可执行文件所在目录创建

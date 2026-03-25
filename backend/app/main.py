@@ -1,10 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from app.api.api_v1.api import api_router
 from app.db.session import init_db, get_db
 from app.core.config import settings, load_configs_to_cache
 import logging
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -48,6 +50,14 @@ app.add_middleware(
 # Include routers
 app.include_router(api_router, prefix="/api/v1")
 
+# Serve static files (frontend)
+public_path = os.path.join(os.path.dirname(__file__), "public")
+if os.path.exists(public_path):
+    app.mount("/", StaticFiles(directory=public_path, html=True), name="public")
+    logger.info(f"Serving static files from: {public_path}")
+else:
+    logger.warning(f"Public directory not found: {public_path}")
+
 
 @app.get("/")
 async def root():
@@ -65,5 +75,5 @@ if __name__ == "__main__":
         "app.main:app",
         host=settings.host,
         port=settings.port,
-        reload=True,
+        reload=settings.reload,
     )

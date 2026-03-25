@@ -103,3 +103,45 @@ DATABASE_URL=sqlite+aiosqlite:///./dns_health_check.db
 ## License
 
 MIT
+
+## Build Executable (PyInstaller)
+
+### Prerequisites
+
+Install PyInstaller:
+
+```bash
+pip install pyinstaller
+```
+
+### Build Command
+
+Run from the backend directory:
+
+```bash
+cd backend
+
+# Install dependencies first
+uv sync
+
+# Build executable
+pyinstaller app/main.py --onefile --name dns-health-check.exe --add-data "app;app" --add-data "app/public;public" --hidden-import fastapi --hidden-import uvicorn --hidden-import uvicorn.logging --hidden-import uvicorn.loops --hidden-import uvicorn.loops.auto --hidden-import uvicorn.protocols --hidden-import uvicorn.protocols.http --hidden-import uvicorn.protocols.http.h11 --hidden-import uvicorn.protocols.websockets --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan --hidden-import uvicorn.lifespan.on --hidden-import starlette --hidden-import starlette.responses --hidden-import starlette.routing --hidden-import starlette.middleware --hidden-import starlette.middleware.cors --hidden-import starlette.staticfiles --hidden-import sqlalchemy --hidden-import sqlalchemy.ext --hidden-import sqlalchemy.ext.asyncio --hidden-import aiosqlite --hidden-import aiomysql --hidden-import asyncpg --hidden-import bcrypt --hidden-import passlib --hidden-import passlib.handlers --hidden-import passlib.handlers.bcrypt --hidden-import pydantic --hidden-import pydantic_settings --hidden-import jose --hidden-import jose.jwt --hidden-import jose.utils --hidden-import jose.backends --hidden-import jose.backends.cryptography_backend --hidden-import cryptography --hidden-import python_multipart --hidden-import docx --hidden-import reportlab --hidden-import passlib.context --paths ".venv/Lib/site-packages"
+
+### Build Output
+
+The executable will be created at `backend/dist/dns-health-check.exe`.
+
+### Run the Executable
+
+```bash
+# The executable will serve both frontend and backend
+# Default port: 9000 (configurable in .env)
+
+./dist/dns-health-check.exe
+```
+
+### Note
+
+- The frontend static files in `app/public/` are bundled into the executable
+- Run `npm run build` in the frontend directory first, then rebuild the PyInstaller package
+- SQLite database will be created in the executable's directory
