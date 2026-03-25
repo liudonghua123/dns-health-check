@@ -5,7 +5,6 @@ import json
 import httpx
 import dns.resolver
 import logging
-import threading
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -18,38 +17,6 @@ from app.core.config import settings
 # Configure logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
-
-# Browser pool for Playwright reuse
-_browser_pool = []
-_browser_lock = threading.Lock()
-_max_browsers = 3
-
-
-def get_browser():
-    """Get a browser from pool or create new one"""
-    with _browser_lock:
-        if _browser_pool:
-            browser = _browser_pool.pop()
-            logger.info(f"[PLAYWRIGHT] Reusing browser from pool, pool size: {len(_browser_pool)}")
-            return browser
-
-    logger.info(f"[PLAYWRIGHT] Creating new browser")
-    from playwright.sync_api import sync_playwright
-    pw = sync_playwright().start()
-    browser = pw.chromium.launch(headless=True)
-    return pw, browser
-
-
-def return_browser(pw, browser):
-    """Return browser to pool"""
-    with _browser_lock:
-        if len(_browser_pool) < _max_browsers:
-            _browser_pool.append((pw, browser))
-            logger.info(f"[PLAYWRIGHT] Returned browser to pool, pool size: {len(_browser_pool)}")
-        else:
-            logger.info(f"[PLAYWRIGHT] Pool full, closing browser")
-            browser.close()
-            pw.stop()
 
 router = APIRouter(prefix="/detect", tags=["detect"])
 
@@ -228,7 +195,7 @@ async def curl_url(url: str, timeout: int = 10) -> dict:
 
 
 def capture_screenshot(url: str, timeout: int = 15) -> dict:
-    """Capture screenshot using playwright with browser pool"""
+    """Capture screenshot using playwright - create new browser each time to avoid threading issues"""
     from app.core.config import get_detection_config
     import os
     from datetime import datetime
@@ -251,93 +218,79 @@ def capture_screenshot(url: str, timeout: int = 15) -> dict:
             break
     logger.info(f"[PLAYWRIGHT] Clean URL: {clean_url}")
 
-    pw = None
-    browser = None
     try:
-        # Get browser from pool
-        pool_item = get_browser()
-        if isinstance(pool_item, tuple):
-            pw, browser = pool_item
-        else:
-            browser = pool_item
+        from playwright.sync_api import sync_playwright
 
-        page = browser.new_page(
-            viewport={"width": 1280, "height": 720},
-            user_agent="DNS-Health-Check/1.0"
-        )
+        # Create fresh browser each time to avoid threading issues
+        with sync_playwright() as pw:
+            logger.info(f"[PLAYWRIGHT] Launching browser...")
+            browser = pw.chromium.launch(headless=True)
+            page = browser.new_page(
+                viewport={"width": 1280, "height": 720},
+                user_agent="DNS-Health-Check/1.0"
+            )
 
-        # Try http first, then https
-        final_url = None
-        for scheme in ["http", "https"]:
-            try:
-                full_url = f"{scheme}://{clean_url}"
-                logger.info(f"[PLAYWRIGHT] Trying {full_url}...")
-                page.goto(full_url, timeout=screenshot_timeout, wait_until="domcontentloaded")
-                final_url = full_url
-                logger.info(f"[PLAYWRIGHT] Successfully loaded {full_url}")
-                break
-            except Exception as e:
-                logger.warning(f"[PLAYWRIGHT] Failed to load {full_url}: {e}")
-                continue
+            # Try http first, then https
+            final_url = None
+            for scheme in ["http", "https"]:
+                try:
+                    full_url = f"{scheme}://{clean_url}"
+                    logger.info(f"[PLAYWRIGHT] Trying {full_url}...")
+                    page.goto(full_url, timeout=screenshot_timeout, wait_until="domcontentloaded")
+                    final_url = full_url
+                    logger.info(f"[PLAYWRIGHT] Successfully loaded {full_url}")
+                    break
+                except Exception as e:
+                    logger.warning(f"[PLAYWRIGHT] Failed to load {full_url}: {e}")
+                    continue
 
-        if not final_url:
-            logger.warning(f"[PLAYWRIGHT] Could not load any URL for {url}")
+            if not final_url:
+                logger.warning(f"[PLAYWRIGHT] Could not load any URL for {url}")
+                browser.close()
+                return {
+                    "status": "error",
+                    "screenshot": None,
+                    "output": "Could not load page with http or https",
+                }
+
+            # Take screenshot BEFORE closing the page
+            screenshot_bytes = page.screenshot(full_page=False)
             page.close()
-            return_browser(pw, browser)
+            browser.close()
+
+            screenshot_base64 = base64.b64encode(screenshot_bytes).decode()
+
+            # Save to file system if enabled
+            saved_file_path = None
+            if save_to_file and snapshot_path:
+                try:
+                    os.makedirs(snapshot_path, exist_ok=True)
+                    # Generate filename: domain_timestamp.png
+                    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                    safe_url = url.replace(".", "_").replace(":", "_").replace("/", "_")
+                    filename = f"{safe_url}_{timestamp}.png"
+                    file_path = os.path.join(snapshot_path, filename)
+
+                    with open(file_path, "wb") as f:
+                        f.write(screenshot_bytes)
+
+                    saved_file_path = file_path
+                    logger.info(f"[PLAYWRIGHT] Screenshot saved to: {file_path}")
+                except Exception as e:
+                    logger.error(f"[PLAYWRIGHT] Failed to save screenshot to file: {e}")
+
+            output_msg = f"Screenshot captured for {final_url}"
+            if saved_file_path:
+                output_msg += f", saved to: {saved_file_path}"
+
             return {
-                "status": "error",
-                "screenshot": None,
-                "output": "Could not load page with http or https",
+                "status": "success",
+                "screenshot": screenshot_base64,
+                "output": output_msg,
+                "file_path": saved_file_path,
             }
-
-        # Take screenshot BEFORE closing the page
-        screenshot_bytes = page.screenshot(full_page=False)
-        page.close()
-
-        # Return browser to pool
-        return_browser(pw, browser)
-        pw = None
-        browser = None
-
-        screenshot_base64 = base64.b64encode(screenshot_bytes).decode()
-
-        # Save to file system if enabled
-        saved_file_path = None
-        if save_to_file and snapshot_path:
-            try:
-                os.makedirs(snapshot_path, exist_ok=True)
-                # Generate filename: domain_timestamp.png
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                safe_url = url.replace(".", "_").replace(":", "_").replace("/", "_")
-                filename = f"{safe_url}_{timestamp}.png"
-                file_path = os.path.join(snapshot_path, filename)
-
-                with open(file_path, "wb") as f:
-                    f.write(screenshot_bytes)
-
-                saved_file_path = file_path
-                logger.info(f"[PLAYWRIGHT] Screenshot saved to: {file_path}")
-            except Exception as e:
-                logger.error(f"[PLAYWRIGHT] Failed to save screenshot to file: {e}")
-
-        output_msg = f"Screenshot captured for {final_url}"
-        if saved_file_path:
-            output_msg += f", saved to: {saved_file_path}"
-
-        return {
-            "status": "success",
-            "screenshot": screenshot_base64,
-            "output": output_msg,
-            "file_path": saved_file_path,
-        }
     except Exception as e:
         logger.error(f"[PLAYWRIGHT] Exception: {type(e).__name__}: {e}")
-        # Make sure to clean up on error
-        if browser:
-            try:
-                return_browser(pw, browser)
-            except:
-                pass
         return {
             "status": "error",
             "screenshot": None,
