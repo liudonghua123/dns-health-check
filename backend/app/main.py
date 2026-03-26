@@ -71,6 +71,18 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+    import webbrowser
+    import threading
+    import time
+
+    def open_browser():
+        time.sleep(1)  # Wait for server to start
+        url = f"http://{settings.host}:{settings.port}"
+        webbrowser.open(url)
+
+    # Open browser in a separate thread
+    threading.Thread(target=open_browser, daemon=True).start()
+
     uvicorn.run(
         "app.main:app",
         host=settings.host,
